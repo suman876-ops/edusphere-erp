@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-edusphere}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edusphere}
+      POSTGRES_DB: ${POSTGRES_DB:-edusphere}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edusphere}"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-edusphere}:${POSTGRES_PASSWORD:-edusphere}@db:5432/${POSTGRES_DB:-edusphere}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-please-32-chars-min}
+      API_PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./apps/web
+    environment:
+      API_URL: http://api:4000/v1
+      NEXT_PUBLIC_API_URL: http://localhost:4000/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
