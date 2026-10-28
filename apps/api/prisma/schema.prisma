@@ -1,0 +1,299 @@
+// EduSphere MVP — core academic + finance schema.
+// Every tenant-scoped table carries campus_id; see docs/architecture.md for the RLS plan.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SA  // Group Super Admin
+  CA  // Campus Admin
+  AO  // Admission Officer
+  HOD // Head of Department
+  FAC // Faculty
+  EXC // Exam Cell
+  ACC // Accountant
+  LIB // Librarian
+  WAR // Hostel Warden
+  TRM // Transport Manager
+  STU // Student
+  PAR // Parent
+}
+
+enum StudentStatus {
+  ACTIVE
+  DROPPED
+  ALUMNI
+}
+
+enum AttendanceStatus {
+  P  // present
+  A  // absent
+  L  // leave
+  OD // on duty
+}
+
+enum AttendanceMode {
+  MANUAL
+  QR
+  QR_GEOFENCE
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  VOID
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  CARD
+  NETBANKING
+  CHEQUE
+  DD
+}
+
+model Group {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  campuses  Campus[]
+
+  @@map("groups")
+}
+
+model Campus {
+  id          String   @id @default(uuid()) @db.Uuid
+  groupId     String   @map("group_id") @db.Uuid
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name        String
+  code        String   @unique
+  city        String?
+  timezone    String   @default("Asia/Kolkata")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  users       User[]
+  departments Department[]
+  programs    Program[]
+  sections    Section[]
+  courses     Course[]
+  students    Student[]
+  sessions    AttendanceSession[]
+  invoices    FeeInvoice[]
+  payments    FeePayment[]
+
+  @@map("campuses")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  campusId     String?  @map("campus_id") @db.Uuid
+  campus       Campus?  @relation(fields: [campusId], references: [id])
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  role         Role
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  facultySessions AttendanceSession[]
+  auditLogs       AuditLog[]
+
+  @@index([campusId, role])
+  @@map("users")
+}
+
+model Department {
+  id       String  @id @default(uuid()) @db.Uuid
+  campusId String  @map("campus_id") @db.Uuid
+  campus   Campus  @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  name     String
+  code     String
+  programs Program[]
+
+  @@unique([campusId, code])
+  @@map("departments")
+}
+
+model Program {
+  id           String     @id @default(uuid()) @db.Uuid
+  campusId     String     @map("campus_id") @db.Uuid
+  campus       Campus     @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  departmentId String     @map("department_id") @db.Uuid
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  name         String
+  code         String
+  level        String     @default("UG")
+  durationYrs  Int        @default(4) @map("duration_yrs")
+  sections     Section[]
+  students     Student[]
+
+  @@unique([campusId, code])
+  @@map("programs")
+}
+
+model Section {
+  id        String   @id @default(uuid()) @db.Uuid
+  campusId  String   @map("campus_id") @db.Uuid
+  campus    Campus   @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  programId String   @map("program_id") @db.Uuid
+  program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  name      String
+  batch     Int
+  semester  Int
+  students  Student[]
+  sessions  AttendanceSession[]
+
+  @@unique([programId, name, batch])
+  @@map("sections")
+}
+
+model Course {
+  id        String   @id @default(uuid()) @db.Uuid
+  campusId  String   @map("campus_id") @db.Uuid
+  campus    Campus   @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  code      String
+  title     String
+  credits   Int      @default(3)
+  semester  Int      @default(1)
+  sessions  AttendanceSession[]
+
+  @@unique([campusId, code])
+  @@map("courses")
+}
+
+model Student {
+  id            String        @id @default(uuid()) @db.Uuid
+  campusId      String        @map("campus_id") @db.Uuid
+  campus        Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  enrollmentNo  String        @unique @map("enrollment_no")
+  firstName     String        @map("first_name")
+  lastName      String        @map("last_name")
+  email         String?
+  phone         String?
+  programId     String        @map("program_id") @db.Uuid
+  program       Program       @relation(fields: [programId], references: [id])
+  sectionId     String        @map("section_id") @db.Uuid
+  section       Section       @relation(fields: [sectionId], references: [id])
+  status        StudentStatus @default(ACTIVE)
+  admissionYear Int           @map("admission_year")
+  guardianName  String?       @map("guardian_name")
+  guardianPhone String?       @map("guardian_phone")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  attendance AttendanceRecord[]
+  invoices   FeeInvoice[]
+
+  @@index([campusId, status])
+  @@index([sectionId])
+  @@map("students")
+}
+
+model AttendanceSession {
+  id         String          @id @default(uuid()) @db.Uuid
+  campusId   String          @map("campus_id") @db.Uuid
+  campus     Campus          @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  courseId   String          @map("course_id") @db.Uuid
+  course     Course          @relation(fields: [courseId], references: [id])
+  sectionId  String          @map("section_id") @db.Uuid
+  section    Section         @relation(fields: [sectionId], references: [id])
+  facultyId  String          @map("faculty_id") @db.Uuid
+  faculty    User            @relation(fields: [facultyId], references: [id])
+  date       DateTime        @db.Date
+  mode       AttendanceMode  @default(QR)
+  status     SessionStatus   @default(OPEN)
+  qrSecret   String          @map("qr_secret")
+  lat        Float?
+  lng        Float?
+  radiusM    Int             @default(150) @map("radius_m")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  closedAt   DateTime?       @map("closed_at")
+  records    AttendanceRecord[]
+
+  @@index([campusId, date])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id         String           @id @default(uuid()) @db.Uuid
+  sessionId  String           @map("session_id") @db.Uuid
+  session    AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId  String           @map("student_id") @db.Uuid
+  student    Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status     AttendanceStatus @default(P)
+  source     String           @default("QR") // QR | MANUAL | IMPORT
+  markedAt   DateTime         @default(now()) @map("marked_at")
+  lat        Float?
+  lng        Float?
+  deviceId   String?          @map("device_id")
+  suspicious Boolean          @default(false)
+
+  @@unique([sessionId, studentId])
+  @@index([studentId])
+  @@map("attendance_records")
+}
+
+model FeeInvoice {
+  id         String        @id @default(uuid()) @db.Uuid
+  campusId   String        @map("campus_id") @db.Uuid
+  campus     Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  studentId  String        @map("student_id") @db.Uuid
+  student    Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  number     String
+  term       String
+  head       String        @default("Tuition")
+  dueDate    DateTime      @map("due_date") @db.Date
+  amount     Int           // paise
+  paidAmount Int           @default(0) @map("paid_amount")
+  status     InvoiceStatus @default(UNPAID)
+  createdAt  DateTime      @default(now()) @map("created_at")
+  payments   FeePayment[]
+
+  @@unique([campusId, number])
+  @@index([campusId, status])
+  @@map("fee_invoices")
+}
+
+model FeePayment {
+  id        String       @id @default(uuid()) @db.Uuid
+  campusId  String       @map("campus_id") @db.Uuid
+  campus    Campus       @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  invoiceId String       @map("invoice_id") @db.Uuid
+  invoice   FeeInvoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount    Int          // paise
+  mode      PaymentMode
+  reference String?
+  receiptNo String       @unique @map("receipt_no")
+  paidAt    DateTime     @default(now()) @map("paid_at")
+
+  @@index([invoiceId])
+  @@map("fee_payments")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  campusId  String?  @map("campus_id") @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  meta      Json?
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([campusId, createdAt])
+  @@map("audit_logs")
+}
