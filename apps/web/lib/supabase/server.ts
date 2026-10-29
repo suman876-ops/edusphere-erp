@@ -1,5 +1,5 @@
 import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 /**
  * Request-bound client. Every query runs as the signed-in user, so RLS applies.
@@ -14,7 +14,7 @@ export async function createClient() {
     {
       cookies: {
         getAll: () => store.getAll(),
-        setAll: (cookiesToSet) => {
+        setAll: (cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) => {
           try {
             cookiesToSet.forEach(({ name, value, options }) => store.set(name, value, options));
           } catch {

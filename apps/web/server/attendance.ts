@@ -15,7 +15,6 @@ type OpenSessionInput = {
   lng?: number;
   radiusM: number;
 };
-import type { z } from 'zod';
 
 const SESSION_ROW = `id, on_date, mode, status, lat, lng, radius_m, opened_at, closed_at,
   subject_id, section_id, faculty_id,
@@ -302,7 +301,7 @@ export async function attendanceSummary(user: SessionUser, studentId: string) {
 
   const bySubject = new Map<string, { code: string; title: string; held: number; present: number }>();
 
-  for (const row of (rows ?? []) as Array<{
+  for (const row of (rows ?? []) as unknown as Array<{
     status: string;
     session: { subject_id: string; subject: { code: string; title: string } };
   }>) {
