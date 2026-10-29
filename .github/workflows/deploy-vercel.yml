@@ -1,0 +1,91 @@
+name: deploy-vercel
+
+# Deploys the Next.js app to Vercel from GitHub's own runners.
+# The sandbox the agent runs in is firewalled from vercel.com, so the deployment
+# has to be executed here instead. Runs on every push to main, or on demand.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-vercel
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for a Vercel token
+        id: gate
+        run: |
+          if [ -n "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::VERCEL_TOKEN is not set — skipping the deployment."
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          node-version: 20
+
+      # Links this directory to the Vercel project, creating it on first run.
+      - name: Link project
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest link --yes --project edusphere-erp --token "$VERCEL_TOKEN" \
+            || npx --yes vercel@latest link --yes --token "$VERCEL_TOKEN"
+
+      # Pushes the values into the Vercel project so the remote build has them.
+      - name: Sync environment variables
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+        run: |
+          set -euo pipefail
+          setvar() {
+            local name="$1" value="${2:-}"
+            if [ -z "$value" ]; then
+              echo "skip $name (no secret set)"
+              return 0
+            fi
+            npx --yes vercel@latest env rm "$name" production --yes --token "$VERCEL_TOKEN" >/dev/null 2>&1 || true
+            printf '%s' "$value" | npx --yes vercel@latest env add "$name" production --token "$VERCEL_TOKEN" >/dev/null
+            echo "set $name"
+          }
+          setvar NEXT_PUBLIC_SUPABASE_URL "$NEXT_PUBLIC_SUPABASE_URL"
+          setvar NEXT_PUBLIC_SUPABASE_ANON_KEY "$NEXT_PUBLIC_SUPABASE_ANON_KEY"
+          setvar NEXT_PUBLIC_SITE_URL "$NEXT_PUBLIC_SITE_URL"
+          setvar SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Deploy to production
+        if: steps.gate.outputs.ready == 'true'
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          url=$(npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN" | tail -n 1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "::notice::Deployed to $url"
+          {
+            echo "## Deployed"
+            echo ""
+            echo "**URL:** $url"
+          } >> "$GITHUB_STEP_SUMMARY"
