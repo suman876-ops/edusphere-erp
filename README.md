@@ -1,106 +1,105 @@
-# EduSphere — Multi-Campus College ERP (MVP slice)
+# EduSphere — Multi-Campus College ERP
 
-A working vertical slice of the EduSphere spec: multi-tenant (Group -> Campus) ERP core with
-JWT auth + role scopes, student records, session-based attendance with **rotating QR + geofence**
-anti-proxy checks, and fee invoicing with counter payments. Built as a monorepo:
+Next.js 15 (App Router) + TypeScript + Tailwind on **Supabase** (Postgres, Auth, Storage,
+Realtime). Multi-tenant from the first migration: Group → Campus → Department → Programme →
+Batch → Section, with Row-Level Security on every tenant table.
+
+> **Status: Phase 1 — the Supabase foundation.** The database layer is complete for the
+> current slice (tenancy, IAM, academic structure, students, attendance, fees). The 25
+> endpoints that existed in the old NestJS API now run as route handlers under
+> `/api/v1`, with the same paths and the same response envelopes. Modules that the
+> specification requires but that are not built yet are listed in `docs/roadmap.md`.
+
+## What is in this repository
 
 ```
-apps/api   NestJS 10 + Prisma + PostgreSQL 16 (REST, /v1)
-apps/web   Next.js 15 App Router + Tailwind (admin console)
-docs/      architecture, API reference, roadmap
+supabase/
+  migrations/       10 versioned SQL migrations — the only source of schema truth
+  seed.sql          idempotent: five institutions (inactive) + one flagged demo campus
+apps/web/
+  app/api/v1/…      17 route handlers (25 operations) — parity with the old API
+  app/(console)/…   six console screens (unchanged markup)
+  server/…          domain logic: auth, tenancy, students, attendance, fees, reports, audit
+  lib/supabase/     three clients: browser, server (RLS as the user), admin (service role)
+  lib/validation.ts Zod schemas shared by client and server
+  components/       existing primitives + a real, scannable QR panel
+tests/rls/          the cross-campus isolation matrix
+scripts/seed-demo.mjs
 ```
 
-## What actually works in this slice
-
-| Area | Status |
-| --- | --- |
-| Login (JWT), role guards, campus scoping via `X-Campus-Id` | working |
-| Group Super Admin can switch campus; campus users are hard-scoped | working |
-| Students list (search, filter, paginate), create, detail, update | working |
-| Attendance sessions (manual / QR / QR+geofence), HMAC rotating QR token, scan endpoint | working |
-| Subject-wise attendance % + shortage flag (<75%) | working |
-| Fee invoices, counter payment, receipt numbers, ledger, outstanding | working |
-| Audit trail on mutating requests | working |
-| Dashboard KPIs | working |
-| Timetable solver, LMS, hostel, transport, exams, library | **not in this slice** — see `docs/roadmap.md` |
-
-## Quick start (Docker)
+## Quick start
 
 ```bash
-cp .env.example .env
-docker compose up --build -d
-docker compose exec api npx prisma db push
-docker compose exec api npm run db:seed
+# 1. dependencies
+cd apps/web && npm install
+
+# 2. local Supabase stack (Docker required)
+supabase start
+
+# 3. schema + seed, from migrations only
+supabase db reset          # applies supabase/migrations/*.sql then supabase/seed.sql
+
+# 4. demo accounts and one demo student (service role needed)
+export NEXT_PUBLIC_SUPABASE_URL=$(supabase status -o env | grep API_URL | cut -d= -f2- | tr -d '"')
+export SUPABASE_SERVICE_ROLE_KEY=$(supabase status -o env | grep SERVICE_ROLE_KEY | cut -d= -f2- | tr -d '"')
+node scripts/seed-demo.mjs
+
+# 5. run
+cp ../../.env.example .env.local   # fill in the three values
+npm run dev                        # http://localhost:3000
 ```
 
-Open http://localhost:3000 and log in with one of the seeded accounts below.
+Demo sign-ins (password `Passw0rd!Passw0rd!`): `superadmin@edusphere.app`,
+`admin.demo@edusphere.app`, `faculty.demo@edusphere.app`, `accountant.demo@edusphere.app`,
+`student.demo@edusphere.app`.
 
-## Quick start (local)
+## Deploying to a live URL
 
-```bash
-# 1. database (any Postgres 15/16)
-createdb edusphere
+The app needs a Supabase project and a Next.js host. Both are one-time, five-minute steps
+that require your accounts — they cannot be done from a commit.
 
-# 2. api
-cd apps/api
-npm install
-cp .env.example .env          # point DATABASE_URL at your db
-npx prisma db push
-npm run db:seed
-npm run start:dev             # http://localhost:4000/v1
+1. **Create the Supabase project** (Pro tier recommended: realtime connections, storage and
+   read replicas all have free-tier limits). Note the project ref.
+2. **Push the schema**: `supabase link --project-ref <ref>` then `supabase db push`. This
+   applies all ten migrations in order. Then run `seed.sql` from the SQL editor.
+3. **Enable the token hook**: Dashboard → Authentication → Hooks → *Custom access token* →
+   `public.custom_access_token_hook`. Without this the `campus_ids` and `roles` claims are
+   absent and RLS will return nothing — the app will look empty, not broken.
+4. **Deploy the web app**: import this repository into Vercel, set the root directory to
+   `apps/web`, and add `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+   `NEXT_PUBLIC_SITE_URL` (the deployed URL) and `SUPABASE_SERVICE_ROLE_KEY`.
+5. **Run the demo seed** against the hosted project once, then create your first real
+   campus admin from the Supabase dashboard.
 
-# 3. web (new terminal)
-cd apps/web
-npm install
-API_URL=http://127.0.0.1:4000/v1 npm run dev   # http://localhost:3000
-```
+## Security model
 
-## Tests
-
-`npm run smoke` (inside `apps/api`) drives the running API end to end: auth, tenant isolation,
-student CRUD, rotating-QR scans, expired/tampered tokens, geofence rejection, fee payments,
-overpayment rejection, audit trail. It prints `36 checks passed, 0 failed` on a healthy build.
-
-## Seeded accounts
-
-| Email | Password | Role | Scope |
-| --- | --- | --- | --- |
-| `superadmin@edusphere.app` | `Passw0rd!` | SA | all campuses |
-| `admin.kol@edusphere.app` | `Passw0rd!` | CA | Kolkata campus |
-| `hod.cse.kol@edusphere.app` | `Passw0rd!` | HOD | Kolkata campus, CSE |
-| `faculty.rao@edusphere.app` | `Passw0rd!` | FAC | Kolkata campus |
-| `accountant.kol@edusphere.app` | `Passw0rd!` | ACC | Kolkata campus |
-| `student.1@edusphere.app` | `Passw0rd!` | STU | Kolkata campus |
-| `admin.dgp@edusphere.app` | `Passw0rd!` | CA | Durgapur campus |
-
-## Tenant model
-
-Hierarchy implemented in this slice: **Group -> Campus -> Department -> Program -> Section**.
-Every row carries `campusId`; the API derives the campus from the JWT and the optional
-`X-Campus-Id` header (Super Admin only). Postgres Row-Level Security policies are documented in
-`docs/architecture.md` and can be layered on top without changing module code.
-
-## Anti-proxy attendance
-
-A session stores a `qrSecret`. The QR token is `HMAC-SHA256(secret, sessionId + step)` truncated to
-12 hex chars and prefixed with the step in base36. `step = floor(now / 20s)`, so the code rotates
-every 20 seconds and a screenshot is worthless after ~40s. In `QR_GEOFENCE` mode the scan must also
-arrive within the session radius (haversine check) and a duplicate device id is flagged.
+- **RLS is the boundary**, not the route guard. Every tenant table has a policy keyed on
+  `campus_id = any (auth_campus_ids())`, where the array comes from a signed JWT claim.
+- **Composite tenant keys**: every parent table has `unique (campus_id, id)` and children
+  reference `(campus_id, parent_id)`, so a cross-campus link fails at the constraint.
+- **Money** is invoice-driven with an append-only ledger; balances are derived. Receipt and
+  invoice numbers come from an atomic per-campus sequence, not `count() + 1`.
+- **The service-role key** is confined to the demo seed, gateway webhooks and the attendance
+  scan write. CI greps the client bundle for it and fails the build if it appears.
+- **Attendance scans** are verified in this order: token window, enrollment, device binding,
+  geofence distance, duplicate device. Every attempt leaves a row in
+  `attendance_scan_events`, so a disputed flag can be re-examined.
 
 ## Scripts
 
 ```bash
-# apps/api
-npm run start:dev     # watch mode
-npm run build         # tsc -> dist
-npm run db:push       # prisma db push
-npm run db:seed       # seed demo data
-npm run smoke         # 36 end-to-end checks against a running API
-
-# apps/web
-npm run dev
-npm run build
+npm run dev        # next dev
+npm run build      # next build
+npm run typecheck  # tsc --noEmit
+npm test           # vitest
 ```
+
+## Not built yet
+
+Admissions, timetable and the CP-SAT solver, exams and results, LMS, library, hostel,
+transport, communication, certificates, helpdesk, reports and the parent portal. Each has
+tables reserved in the migration plan and a phase in `docs/roadmap.md`. No screen in this
+repository links to a feature that does not exist.
 
 ## License
 

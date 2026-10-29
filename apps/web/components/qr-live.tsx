@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 
 interface QrState {
   token: string;
@@ -8,25 +9,14 @@ interface QrState {
   step: number;
 }
 
-/** Deterministic 21x21 block pattern so the demo has a scannable-looking code. */
-function patternFrom(token: string): boolean[] {
-  let seed = 2166136261;
-  for (let i = 0; i < token.length; i += 1) {
-    seed ^= token.charCodeAt(i);
-    seed = Math.imul(seed, 16777619);
-  }
-  const cells: boolean[] = [];
-  for (let i = 0; i < 441; i += 1) {
-    seed ^= seed << 13;
-    seed ^= seed >>> 17;
-    seed ^= seed << 5;
-    cells.push((seed & 3) !== 0);
-  }
-  return cells;
-}
-
+/**
+ * Renders a real, scannable QR code of the rotating token.
+ * The previous version drew a deterministic block pattern, which looked like a QR
+ * code but could not be scanned — the anti-proxy design was never exercised.
+ */
 export function QrLive({ sessionId }: { sessionId: string }) {
   const [state, setState] = useState<QrState | null>(null);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
@@ -36,7 +26,10 @@ export function QrLive({ sessionId }: { sessionId: string }) {
     const load = async () => {
       try {
         const res = await fetch(`/api/qr/${sessionId}`, { cache: 'no-store' });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'QR unavailable');
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.message ?? 'QR unavailable');
+        }
         const data = (await res.json()) as QrState;
         if (!cancelled) {
           setState(data);
@@ -57,6 +50,21 @@ export function QrLive({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     if (!state) return;
+    let cancelled = false;
+    QRCode.toDataURL(state.token, { margin: 1, width: 260, errorCorrectionLevel: 'M' })
+      .then((url) => {
+        if (!cancelled) setDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not render QR');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state]);
+
+  useEffect(() => {
+    if (!state) return;
     const tick = () => {
       const left = Math.max(0, Math.round((new Date(state.expiresAt).getTime() - Date.now()) / 1000));
       setSecondsLeft(left);
@@ -66,28 +74,16 @@ export function QrLive({ sessionId }: { sessionId: string }) {
     return () => clearInterval(timer);
   }, [state]);
 
-  if (error) {
-    return <p className="text-sm text-rose-600">{error}</p>;
-  }
-  if (!state) {
-    return <p className="text-sm text-slate-500">Loading code…</p>;
-  }
-
-  const cells = patternFrom(state.token);
+  if (error) return <p className="text-sm text-rose-600">{error}</p>;
+  if (!state || !dataUrl) return <p className="text-sm text-slate-500">Loading code…</p>;
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="grid grid-cols-21 gap-[2px] rounded-lg bg-white p-2 ring-1 ring-slate-200" style={{ gridTemplateColumns: 'repeat(21, 8px)' }}>
-        {cells.map((on, i) => (
-          <span
-            key={i}
-            className={`block h-2 w-2 rounded-[1px] ${on ? 'bg-slate-900' : 'bg-white'}`}
-          />
-        ))}
-      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={dataUrl} alt="Attendance QR code" width={260} height={260} className="rounded-lg bg-white p-2 ring-1 ring-slate-200" />
       <p className="font-mono text-xs text-slate-500">{state.token}</p>
       <p className="text-xs font-medium text-slate-600">
-        Rotates in {secondsLeft}s · screenshot becomes invalid
+        Rotates in {secondsLeft}s · a screenshot stops working within 40s
       </p>
     </div>
   );
