@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { api, formatDate } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { Paginated, Student } from '@/lib/types';
 import { EmptyState, Pagination, StatusBadge } from '@/components/ui';
 
