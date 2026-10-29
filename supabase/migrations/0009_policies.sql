@@ -173,10 +173,11 @@ create policy condonations_read on condonations for select to authenticated
 -- Reads are scoped to the accountant, the campus admin and the student or ward.
 -- All writes go through app_record_payment / app_create_invoice, so there is no
 -- direct write policy on any finance table.
+-- Tables that carry student_id directly.
 do $$
 declare t text;
 begin
-  foreach t in array array['fee_invoices','payments','receipts','ledger_entries','concessions','refunds']
+  foreach t in array array['fee_invoices','payments','ledger_entries','concessions']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format(
@@ -187,6 +188,35 @@ begin
       t || '_read', t);
   end loop;
 end $$;
+
+-- receipts and refunds reach the student through payments, so the self clause joins.
+alter table receipts enable row level security;
+create policy receipts_read on receipts for select to authenticated
+  using (
+    campus_id = any (public.auth_campus_ids())
+    and (
+      public.auth_has_role('ACC','CA','SA')
+      or exists (
+        select 1 from payments p
+         where p.id = receipts.payment_id
+           and p.student_id = any (public.auth_student_ids())
+      )
+    )
+  );
+
+alter table refunds enable row level security;
+create policy refunds_read on refunds for select to authenticated
+  using (
+    campus_id = any (public.auth_campus_ids())
+    and (
+      public.auth_has_role('ACC','CA','SA')
+      or exists (
+        select 1 from payments p
+         where p.id = refunds.payment_id
+           and p.student_id = any (public.auth_student_ids())
+      )
+    )
+  );
 
 -- ---------------------------------------------------------------- audit & internals
 alter table audit_logs enable row level security;
