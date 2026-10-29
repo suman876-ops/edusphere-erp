@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
-const PUBLIC_PATHS = ['/login'];
+const PUBLIC_PATHS = ['/login', '/', '/programs', '/campuses', '/notices', '/contact'];
 
 export async function middleware(req: NextRequest) {
   let res = NextResponse.next({ request: req });
@@ -25,7 +25,9 @@ export async function middleware(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   const { pathname } = req.nextUrl;
 
-  if (!user && !PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  const isPublic = PUBLIC_PATHS.some((p) => (p === '/' ? pathname === '/' : pathname.startsWith(p)));
+
+  if (!user && !isPublic) {
     const url = req.nextUrl.clone();
     url.pathname = '/login';
     url.searchParams.set('next', pathname);
@@ -34,7 +36,7 @@ export async function middleware(req: NextRequest) {
 
   if (user && pathname === '/login') {
     const url = req.nextUrl.clone();
-    url.pathname = '/';
+    url.pathname = '/dashboard';
     url.search = '';
     return NextResponse.redirect(url);
   }

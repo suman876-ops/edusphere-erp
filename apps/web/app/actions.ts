@@ -12,7 +12,7 @@ const CAMPUS_COOKIE = { httpOnly: true, sameSite: 'lax' as const, path: '/', max
 export async function loginAction(formData: FormData) {
   const email = String(formData.get('email') ?? '').trim().toLowerCase();
   const password = String(formData.get('password') ?? '');
-  const next = String(formData.get('next') ?? '/');
+  const next = String(formData.get('next') ?? '/dashboard');
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -23,7 +23,7 @@ export async function loginAction(formData: FormData) {
 
   const store = await cookies();
   store.delete('es_campus');
-  redirect(next.startsWith('/') ? next : '/');
+  redirect(next.startsWith('/') ? next : '/dashboard');
 }
 
 export async function logoutAction() {
